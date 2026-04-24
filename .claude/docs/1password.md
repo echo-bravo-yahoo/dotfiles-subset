@@ -19,18 +19,38 @@ op run --account machinify.1password.com --env-file="./dev.env" -- cypress open
 
 ## Caching credentials
 
-Every `op item get` call triggers biometric auth. To avoid repeated prompts within a session, wrap the fetch in a default-value expansion:
+Every `op` read triggers biometric auth. Caching strategy depends on where you're running.
+
+### Inside Claude Code — use `cc-cred run`
+
+The Bash tool spawns a fresh zsh for every call, so exported env vars don't survive across Bash invocations — a tight loop re-fetches on every iteration and fires the biometric prompt each time. `cc-cred` solves this by caching under the current `c` session's state dir:
+
+```bash
+cc-cred run MY_TOKEN=op://Shared-UI-Team/foo/credential -- <cmd>
+cc-cred run --account machinify.1password.com \
+  MY_TOKEN=op://Shared-UI-Team/foo/credential \
+  OTHER=op://Private/bar/password \
+  -- ./my-script.sh
+```
+
+First call: `op read` fetches, cache is populated at `~/.c/state/<session-id>/creds/<NAME>` (file `0600`, dir `0700`), then the child `exec`s with `NAME=<value>` in its env. Subsequent calls: read cached value directly — no biometric prompt. The value never transits the Bash tool's stdout, so it doesn't land in the CC transcript.
+
+- **Session-scoped.** `cc-cred` resolves the session via `c state-dir`, which walks process ancestry to the `claude` PID and intersects with `~/.c/index.toml`. This only works for sessions started via `c new` / `c resume` (ephemeral or raw `claude` invocations aren't tracked — `cc-cred` exits non-zero with a clear message).
+- **Sibling agents share the cache.** Sub-agents within the same session share ancestry back to the same `claude` PID, so they hit the same creds dir — first agent pays the `op read`, the rest read cache.
+- **How isolation works.** Same-UID peer sessions can't isolate each other via OS filesystem permissions, so cc-allow enforces it: `read.deny` / `write.deny` / `edit.deny` rules on `path:$HOME/.c/state/*/creds/**` block direct `cat`/`Read`/`Write`/`Edit` access through CC tools. `cc-cred` is the only allowed reader, and it only ever opens its own session's dir. See `cc-allow.md` for rule details.
+- **Lifecycle.** The cache dir is deleted when the session ends (via `c hook session-end`). If the session crashes, `c`'s `reconcileStaleSessions` sweeps the orphan on the next `c` session start.
+
+`cc-cred` subcommands: `run` (primary), `set` (pre-fetch only), `list` (cached names — values never printed), `purge` (delete this session's creds), `session` (print resolved session id).
+
+### Outside Claude Code — the env-var default pattern
+
+For interactive shells, `op run` wrappers, or scripts you invoke yourself, the POSIX default-value trick is still the right move:
 
 ```bash
 export MY_TOKEN="${MY_TOKEN:-$(op item get <item-id> --account <account> --fields credential --reveal)}"
 ```
 
-- **First call**: `MY_TOKEN` is unset, so the `op` subshell runs and the result is exported.
-- **Subsequent calls**: `MY_TOKEN` is already set, so `op` is never invoked.
-
-This is standard POSIX `${param:-word}` expansion — works on bash 3.2+, zsh, and sh.
-
-**Agent dispatch**: agents don't inherit env vars. Include the same `export` line in the agent prompt — the parent session's cached value won't help, but each agent only calls `op` once.
+First call fetches via `op`; subsequent calls in the same shell skip the subshell because `MY_TOKEN` is already set. Standard `${param:-word}` expansion — bash 3.2+, zsh, sh.
 
 ## WSL2 bridge
 

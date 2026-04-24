@@ -75,10 +75,10 @@
       {
         "scope": "project",
         "projectPath": "/Users/ashton.eby",
-        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/frontend-design/unknown",
-        "version": "unknown",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/frontend-design/cf62a6c02dc0",
+        "version": "cf62a6c02dc0",
         "installedAt": "2026-03-23T15:30:58.787Z",
-        "lastUpdated": "2026-03-25T15:34:22.511Z",
+        "lastUpdated": "2026-04-22T19:47:08.963Z",
         "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
       }
     ],

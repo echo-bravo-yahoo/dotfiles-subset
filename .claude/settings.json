@@ -148,6 +148,15 @@
             "command": "~/.claude/hooks/validate-config.sh"
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/deny-update-config.sh"
+          }
+        ]
       }
     ],
     "Notification": [
@@ -218,7 +227,8 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline.sh"
+    "command": "~/.claude/statusline.sh",
+    "refreshInterval": 60000
   },
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,

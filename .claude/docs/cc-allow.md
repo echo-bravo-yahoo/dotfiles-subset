@@ -194,13 +194,65 @@ Create `.config/cc-allow.toml` in the project root.
 **Temporary session need:**
 Create `.config/cc-allow/sessions/<session-id>.toml`.
 
+**A rule exists for a concept but prompts from an unexpected invocation or tool:**
+Walk the Duplicate-Entry Patterns section below to find the cooperating entry the concept is missing.
+
+## Duplicate-Entry Patterns
+
+Several cc-allow mechanics force a single concept (one script, one command, one protected path) to need multiple cooperating entries. The patterns below are phrased as authoring rules: when adding or editing a rule that fits the trigger, the corresponding cooperating entry must also exist.
+
+See Cross-Tool Evaluation below for the underlying mechanics these rules compensate for.
+
+### 1. Tilde non-expansion
+
+cc-allow sees the literal `~` — no shell expansion happens before matching. `path:$HOME/...` globs match bare-name (PATH-resolved) and absolute-path forms, but not the tilde form.
+
+**When adding or editing a rule for a command or script that may be invoked with a `~/...` path, ensure a tilde-literal string appears in `bash.allow.commands` alongside the path-glob or alias entry.**
+
+### 2. Short-flag / long-flag variants
+
+cc-allow matches arg strings literally. `-i` and `--in-place` are different strings; rules on one do not catch the other. `flags:<char>` handles short-flag grouping (`flags:f` matches `-f`, `-rf`, `-vrf`).
+
+**When adding or editing a rule that targets a flag, ensure the short form (`flags:<char>`) and every long-form string the flag accepts are both enumerated.**
+
+### 3. Deny-dangerous + allow-safe-wrapper
+
+When a command is unsafe raw but a wrapper script constrains it, cc-allow must simultaneously deny the raw form and allow the wrapper.
+
+**When adding or editing a deny rule whose message points to a safer wrapper, ensure the wrapper is (a) present on disk, (b) in `bash.allow.commands` covering every invocation form the user documents (see Pattern 1 for tilde), (c) named explicitly in the deny message.**
+
+### 4. Read/Write/Edit parity on sensitive paths
+
+File tools split into three independent sections: `[read]`, `[write]`, `[edit]`. A path denied in one but not the others leaves a hole the agent can route through via the other tool.
+
+**When adding or editing a rule for a path in any of `read`, `write`, `edit`, ensure the other two sections have a compatible rule. Sensitive paths (credentials, SSH keys, env files) should deny in all three; sanctioned work areas should allow in all three. Asymmetry must be deliberate and commented.**
+
+### 5. Redirect + write parity
+
+Output redirection (`cmd > /path`) triggers a check in `[bash.redirects]` in addition to the bash command check. With `respect_file_rules = true`, `[write]` rules also apply. Both layers evaluate.
+
+**When adding or editing a rule that restricts writes to a path, ensure it is covered by both `[bash.redirects]` and `[write]` in the same direction. A path denied in `write` but allowed as a redirect target is routed-around.**
+
+### 6. Bash-command / file-tool parity
+
+File-tool denies (`edit.deny`, `write.deny`) stop the `Edit` and `Write` tools. They do not stop a shell command from achieving the same effect (`tee`, `sed -i`, `cp -f`, `rm`, `chmod`, `>`, `>>`) unless the secondary redirect/write checks fire.
+
+**When adding or editing a file-tool deny for a path, ensure at least one of the following holds for each mutating bash command: the command itself is denied (e.g. `sed -i`), or the path is in `write.deny` / `bash.redirects.deny` so the secondary check catches writes routed through shell.**
+
+### 7. File-viewer secondary read check
+
+`cat`, `head`, `tail`, `less` are in `bash.allow.commands`, but each file argument triggers a read check against `[read.allow]`. Bash-side allow is necessary but not sufficient.
+
+**When adding or editing a directory where an agent is expected to read files via bash commands, ensure the directory is in `[read.allow].paths`.** On macOS, `$TMPDIR` resolves under `/private/var/folders/**` — `alias:tmp` must include that glob (or an explicit `read.allow` entry must) for `mktemp`-style reads to allow.
+
 ## Cross-Tool Evaluation
 
-A single tool use can trigger **multiple evaluation passes**. If the primary rule allows a command but it still prompts, a secondary evaluation in a different section is the cause.
+A single tool use can trigger **multiple evaluation passes**. If the primary rule allows a command but it still prompts, a secondary evaluation in a different section is the cause. See Duplicate-Entry Patterns above for the authoring rules these mechanics impose.
 
 Known secondary evaluations:
 - `ln -s <target> <link>` → write check on the symlink target path
 - Commands with redirects (`>`, `>>`) → write check on the redirect target (governed by `[bash.redirects]` rules)
+- File-viewer commands (`cat`, `tail`, `head`, `less`, `more`, etc.) → read check on each file argument. The bash command may be in `bash.allow.commands`, but the file path must also satisfy `[read.allow]`.
 
 The `source=` field in debug output identifies which section triggered the prompt:
 - `source="...bash.allow.commands"` → bash rule

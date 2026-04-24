@@ -64,6 +64,17 @@ acli jira workitem edit --key MAC-12345 --description "Updated description"
 | `--yes` / `-y` | Skip confirmation prompts |
 | `--web` / `-w` | Open in browser |
 
+## Ticket lifecycle (engineering)
+
+PR-driven tickets follow this status progression:
+
+1. PR opened → transition Jira to **Code Review**
+2. PR merged → transition Jira to **Verification In Progress** (QA picks it up)
+3. QA passes → QA moves it to **QA Verified**
+4. Once QA Verified, eligible to transition to **Done**
+
+Do not skip straight to Done after merge — QA must verify first.
+
 ## Sprints
 
 Sprint commands require a board or sprint ID — no simple `list all sprints`:

@@ -54,14 +54,16 @@ When adding tmux keybindings, always check if the key has a default binding. Pro
 
 ## Dotfile Syncing
 
-After editing any file tracked by the dotfiles backup (`~/.tmux.conf`, `~/.zshrc`, `~/.zshenv`, `~/.gitconfig`, `~/.config/nvim/**`, `~/.config/ghostty/**`, `~/.config/cc-allow.toml`, `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/skills/**`, and others), sync the change to the backup repo:
+Multi-session / multi-host model — assume concurrent sessions and hosts edit this repo. Full architecture in `~/.claude/docs/dotfiles.md`; canonical rules here:
 
-1. `cd ~/workspace/dotfiles && wildflower gather`
-2. `git -C ~/workspace/dotfiles add -A && git -C ~/workspace/dotfiles commit -m "<subsystem>: <description>"`
+- **Gather is automatic.** A watcher daemon (launchd on macOS, systemd user service on Linux/WSL) runs `wildflower gather` on every fs change to tracked paths. Never invoke `wildflower` directly — cc-allow denies bare `wildflower gather|sow|till`. The watcher logs to `~/.aeby/logs/dotfiles-watcher.log`.
+- **Commit selectively.** After editing a tracked home file, stage only the specific `meadows/~~/...` path that mirrors what you just edited. Never `git add -A` in this repo — cc-allow denies it. Never commit paths you didn't edit.
+- **Commit message**: subject `<subsystem>: <description>`, optional body, then a blank line, then the bare Claude Code session ID (`$CLAUDE_SESSION_ID`) as the last body line. No label, no "Session:" prefix, no "claude" word or LLM attribution — just the ID.
+- **Pulling is scripted.** Never `git pull` in this repo directly — cc-allow denies it. Always run `~/.aeby/scripts/dotfiles-update.sh`, which performs `gather → stash → pull --rebase → pop → sow` and writes a freshness marker at `.last-update`.
+- **Push whenever the update script has run.** The pre-push hook refuses push if the marker doesn't match current `origin/main`. Override only via `--no-verify` if you know what you're doing.
+- **Failure recovery.** If the update script or pre-push hook exits 2, its stderr contains remediation. Read it. Don't blindly retry — fix the stated cause first.
 
-The gather command is `wildflower gather`, not `node meadows.mjs gather`. `meadows.mjs` is a config file read by the `wildflower` CLI — running it directly with `node` is a no-op that exits silently without copying files.
-
-Do not push. Full tracked-path list: `~/workspace/dotfiles/meadows.mjs`. For ad-hoc use: `/gather`.
+Tracked-path list: `~/workspace/dotfiles/meadows.mjs`. Emergency-checkpoint skill: `/gather` (fallback only; do not use for routine sync).
 
 ## Bash Portability
 
@@ -157,7 +159,9 @@ When asked to open a new terminal window or tab to a directory (with or without 
 
 ## Personal Scripts
 
-Personal scripts used by Claude Code and other tooling live in `~/.aeby/scripts/`. New scripts should go there. They are allowed in cc-allow via the `aeby-scripts` alias (`path:$HOME/.aeby/scripts/**`).
+- **One-off scripts** (swatches, debug probes, ad-hoc throwaways): write to `/tmp/`. Do not put them in `~/.aeby/scripts/`.
+- **Long-lived scripts** (reusable tools, automation, anything referenced from docs or other scripts): live in `~/.aeby/scripts/`. They are allowed in cc-allow via the `aeby-scripts` alias (`path:$HOME/.aeby/scripts/**`).
+- **Prototype everything in `/tmp/` first.** Only after a script has proven its value and shape should it be moved to `~/.aeby/scripts/`. This keeps the long-lived directory free of experimental clutter.
 
 ## Automation Over Suggestions
 

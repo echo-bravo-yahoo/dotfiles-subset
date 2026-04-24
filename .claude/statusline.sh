@@ -38,8 +38,8 @@ PARTS=()
 # Source session cache from c CLI
 BRANCH="" PR="" JIRA="" REPO="" JIRA_BASE="" WORKTREE="" WORKTREE_PATH=""
 C_HOME="${C_HOME:-$HOME/.c}"
-if [[ -n "$SESSION_ID" && -f "$C_HOME/status/$SESSION_ID" ]]; then
-    . "$C_HOME/status/$SESSION_ID"
+if [[ -n "$SESSION_ID" && -f "$C_HOME/state/$SESSION_ID/status" ]]; then
+    . "$C_HOME/state/$SESSION_ID/status"
 fi
 
 # Shorten path with color: ~/w/project for ~/workspace/project
@@ -187,6 +187,27 @@ else
     PCT_COLOR=76   # green — plenty of room
 fi
 PARTS+=("$(c $PCT_COLOR)${PCT}%$(r)")
+
+# Time since last user message
+TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+if [[ -n "$TRANSCRIPT" && -f "$TRANSCRIPT" ]]; then
+    LAST_TS=$(jq -r 'select(.type == "user") | .timestamp // empty' "$TRANSCRIPT" 2>/dev/null | tail -1)
+    if [[ -n "$LAST_TS" ]]; then
+        TS_CLEAN="${LAST_TS%.*}"; TS_CLEAN="${TS_CLEAN%Z}"
+        LAST_EPOCH=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$TS_CLEAN" "+%s" 2>/dev/null || true)
+        if [[ -n "$LAST_EPOCH" ]]; then
+            ELAPSED_MIN=$(( ( $(date -u "+%s") - LAST_EPOCH ) / 60 ))
+            if [[ $ELAPSED_MIN -lt 60 ]]; then
+                IDLE_FMT="${ELAPSED_MIN}m"
+            elif [[ $ELAPSED_MIN -lt 1440 ]]; then
+                IDLE_FMT="$((ELAPSED_MIN / 60))h$((ELAPSED_MIN % 60))m"
+            else
+                IDLE_FMT="$((ELAPSED_MIN / 1440))d$(((ELAPSED_MIN % 1440) / 60))h"
+            fi
+            PARTS+=("$(c 244)${IDLE_FMT}$(r)")
+        fi
+    fi
+fi
 
 # Cost — Pro/Max: replace with 5h rate limit as $XX%; API billing: show dollar cost
 RL_PCT=$(echo "$INPUT" | jq -r '.rate_limits.five_hour.used_percentage // empty')
