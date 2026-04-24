@@ -1,0 +1,684 @@
+# cc-allow Global Configuration
+# Place at: ~/.config/cc-allow.toml
+#
+# Provides sensible defaults for common *nix commands and coreutils.
+# Project-level configs can add stricter rules on top of this.
+
+version = "2.0"
+
+# ============================================================================
+# SETTINGS
+# ============================================================================
+
+[settings]
+session_max_age = "30d"  # auto-delete session configs older than this duration
+
+# ============================================================================
+# ALIASES
+# ============================================================================
+
+[aliases]
+project = "path:$PROJECT_ROOT/**"
+claude-user-config = "path:$HOME/.claude/**"
+tmp = [
+    "path:/tmp/**",
+    "path:/private/tmp/**",
+    # macOS $TMPDIR lives under /private/var/folders/<hash>/T/
+    "path:/private/var/folders/*/*/T/**",
+]
+sensitive-read = ["path:$HOME/.ssh/**", "path:**/*.key", "path:**/*.pem"]
+sensitive-write = [
+    "path:$HOME/.*",
+    "path:/etc/**",
+    "path:/usr/**",
+    "path:/bin/**",
+    "path:/sbin/**",
+    "path:/lib/**",
+    "path:/lib64/**",
+    "path:/var/**",
+    "path:/boot/**",
+    "path:/root/**",
+    "path:/",
+]
+notes = [
+    "path:$HOME/notes/**",
+    "path:/mnt/d/Human Documents/notes/**",
+    # cc-allow extracts bash args verbatim, so `find /mnt/d/Human\ Documents/notes`
+    # produces a path containing a literal backslash. Match that form too.
+    're:^/mnt/d/Human\\ Documents/notes(/.*)?$',
+]
+workspace = "path:$HOME/workspace/**"
+aeby-scripts = "path:$HOME/.aeby/scripts/**"
+windows-terminal-config = "path:/mnt/c/Users/heron/AppData/Local/Packages/Microsoft.WindowsTerminal_*/LocalState/**"
+env-files = ["path:**/.env", "path:**/.env.*", "path:**/secrets/**"]
+
+# ============================================================================
+# BASH TOOL CONFIGURATION
+# ============================================================================
+
+[bash]
+default = "ask"
+dynamic_commands = "ask"
+default_message = "Command not in allow list"
+unresolved_commands = "ask"
+
+[bash.constructs]
+function_definitions = "deny"
+background = "allow"
+subshells = "ask"
+heredocs = "allow"
+
+# ============================================================================
+# ALLOWED COMMANDS
+# ============================================================================
+
+[bash.allow]
+commands = [
+    # Claude scripts
+    "alias:claude-user-config",
+    "alias:aeby-scripts",
+    # Tilde-form invocation: cc-allow sees literal "~" (no shell expansion)
+    # so the aliases above do not match. Enumerate every executable in the
+    # two script dirs as a literal string so every invocation form allows.
+    # Regenerate with:
+    #   find ~/.aeby/scripts ~/.claude/scripts -maxdepth 1 -type f -perm -u+x
+    "~/.aeby/scripts/amq-dispatch",
+    "~/.aeby/scripts/backup-crontab.sh",
+    "~/.aeby/scripts/backup-homebrew.sh",
+    "~/.aeby/scripts/backup-wildflower.sh",
+    "~/.aeby/scripts/cc-cred",
+    "~/.aeby/scripts/ccq-safe.sh",
+    "~/.aeby/scripts/create-task.sh",
+    "~/.aeby/scripts/dispatch-gate-test.sh",
+    "~/.aeby/scripts/dotfiles-prepush-hook.sh",
+    "~/.aeby/scripts/dotfiles-update.sh",
+    "~/.aeby/scripts/dotfiles-watcher.sh",
+    "~/.aeby/scripts/ghostty-tab.sh",
+    "~/.aeby/scripts/ghostty-window.sh",
+    "~/.aeby/scripts/install-dotfiles-hooks.sh",
+    "~/.aeby/scripts/install-dotfiles-watcher.sh",
+    "~/.aeby/scripts/itad-auth.sh",
+    "~/.aeby/scripts/log-aware.sh",
+    "~/.aeby/scripts/nvim-launcher.sh",
+    "~/.aeby/scripts/opts-test.sh",
+    "~/.aeby/scripts/reddit.sh",
+    "~/.aeby/scripts/report-ebird-life-list.sh",
+    "~/.aeby/scripts/report-gmail-inbox.sh",
+    "~/.aeby/scripts/report-pinboard.sh",
+    "~/.aeby/scripts/report-rating-update.sh",
+    "~/.aeby/scripts/report-syncthing-conflicts.sh",
+    "~/.aeby/scripts/report-taskwarrior-tasks.sh",
+    "~/.aeby/scripts/session-fork-info",
+    "~/.aeby/scripts/simulate-cron.sh",
+    "~/.aeby/scripts/stop-calc.py",
+    "~/.aeby/scripts/sync-authorized-keys.sh",
+    "~/.aeby/scripts/wait-for-docker.sh",
+    "~/.aeby/scripts/worktree-land",
+    "~/.aeby/scripts/wt-nvim.sh",
+    "~/.claude/scripts/amq-dispatch",
+    "~/.claude/scripts/amq-notify",
+    "~/.claude/scripts/mdq-test-iterate.sh",
+    "~/.claude/scripts/mdq-test-metrics.sh",
+    "~/.claude/scripts/mdq-test-run.sh",
+    "~/.claude/scripts/worktree.sh",
+
+    # Agent coordination
+    "amq",
+    # Project scripts (worktree-compatible glob)
+    "path:$HOME/workspace/**/.claude/scripts/**",
+
+    # Session manager (dev mode)
+    "c-dev",
+
+    # File & Directory Navigation
+    "ls", "dir", "vdir",
+    "pwd",
+    "tree",
+    "file",
+    "stat",
+    "basename", "dirname",
+    "realpath", "readlink", "greadlink",
+
+    # File Viewing & Reading
+    "cat", "tac",
+    "head", "tail",
+    "less", "more",
+    "nl",
+    "od", "hexdump", "xxd",
+    "read",
+    "mdq",
+
+    # Text Processing & Transformation
+    "grep", "egrep", "fgrep",
+    "sed", "awk", "gawk",
+    "cut", "paste", "join",
+    "sort", "uniq", "shuf",
+    "tr", "rev",
+    "expand", "unexpand",
+    "fold", "fmt",
+    "column",
+    "pr",
+    "wc",
+    "comm", "diff", "cmp", "colordiff", "delta",
+    "iconv",
+    "strings",
+
+    # Searching & Finding
+    "find",
+    "fd",
+    "locate", "mlocate", "plocate",
+    "which", "whereis", "type",
+    "xargs",
+    "rg", "ripgrep",
+    "ag",
+    "fzf",
+
+    # File Operations (Non-Destructive)
+    "cp",
+    "mv",
+    "touch",
+    "mkdir",
+    "ln",
+    "install",
+    "rm",
+    "rmdir",
+    "trash", "trash-list", "trash-restore",
+
+    # Archive & Compression
+    "tar",
+    "gzip", "gunzip", "zcat",
+    "bzip2", "bunzip2", "bzcat",
+    "xz", "unxz", "xzcat",
+    "zstd", "unzstd", "zstdcat",
+    "zip", "unzip",
+    "7z", "7za", "7zr",
+    "rar", "unrar",
+
+    # Printing & Output
+    "echo", "printf",
+    "yes",
+    "seq",
+    "tee",
+
+    # Date, Time & Calculation
+    "date",
+    "cal", "ncal",
+    "time", "nohup",
+    "bc", "dc",
+    "expr",
+    "factor",
+
+    # User & System Info (Read-Only)
+    "whoami",
+    "id",
+    "groups",
+    "who", "w",
+    "users",
+    "last", "lastlog",
+    "finger",
+    "uname",
+    "hostname",
+    "hostnamectl",
+    "uptime",
+    "arch",
+    "nproc",
+    "lscpu",
+    "lsmem",
+    "free",
+    "df",
+    "du",
+    "lsblk",
+    "lsusb",
+    "lspci",
+    "lsof",
+    "dmesg",
+
+    # Process Inspection (Read-Only)
+    "ps",
+    "top", "htop",
+    "pgrep", "pidof",
+    "pstree",
+    "jobs",
+    "nice", "renice",
+
+    # Network Inspection (Read-Only)
+    "ping", "ping6",
+    "traceroute", "tracepath",
+    "mtr",
+    "dig", "nslookup", "host",
+    "whois",
+    "ip",
+    "ifconfig",
+    "ss", "netstat",
+    "nc", "netcat",
+    "nmap",
+    "tcpdump",
+
+    # Shell Builtins & Utilities
+    "cd", "pushd", "popd", "dirs",
+    "test", "[", "[[",
+    "true", "false",
+    "sleep", "wait",
+    "set", "unset", "shopt", "setopt", "unsetopt",
+    "export", "local", "declare", "typeset", "readonly",
+    "shift", "return", "exit", "break",
+    "source", ".",
+    "trap", "hash", "rehash", "unhash", "getopts", "umask",
+    "env", "printenv",
+    # zsh-specific builtins (safe, current-shell state only)
+    "alias", "unalias",
+    "whence", "where",
+    "functions", "history",
+    "print", "let",
+    "autoload", "unfunction",
+    "emulate",
+
+    # Version Control
+    "git",
+    "gh",
+    "hg",
+    "svn",
+    "fossil",
+
+    # Build & Dev Tools
+    "curl", "wget",
+    "node", "npm", "npx", "yarn",
+    "nvm", "python3",
+    "jira",
+    "shellcheck",
+    "open", "pbcopy", "pbpaste", "ghostty", "duti",
+    "cc-allow",
+    "task", "just", "c", "claude", "opencode", "cc-query", "nb",
+    "tmux",
+    "ast-grep",
+    "expect",
+    "op",
+    # pkill: scoped below to node/tsx/npm only
+    "playwright-cli",
+    "mfy",
+    "acli",
+
+    # Misc Utilities
+    "man", "info", "help",
+    "apropos", "whatis",
+    "tldr",
+    "watch",
+    "timeout",
+    "strace", "ltrace",
+    "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum",
+    "base64",
+    "nix", "nix-env", "nix-shell",
+    "jq",
+    "sd",
+    "fd",
+    "eza",
+    "ssh-keygen", "ssh-keyscan", "ssh-add",
+    "scp",
+    "infocmp", "tic",
+
+    # Image Processing
+    "sips",
+]
+
+# ============================================================================
+# DENIED COMMANDS
+# ============================================================================
+
+[bash.deny]
+commands = [
+    # Privilege escalation
+    "sudo", "su", "doas", "pkexec",
+    # Disk/filesystem operations
+    "dd", "mkfs", "fdisk", "parted", "gdisk", "cfdisk", "sfdisk",
+    "mkswap", "swapon", "swapoff",
+    "mount", "umount",
+    "losetup",
+    "lvm", "pvcreate", "vgcreate", "lvcreate",
+    # System control
+    "shutdown", "reboot", "halt", "poweroff", "init", "telinit",
+    # User/group management
+    "useradd", "userdel", "usermod",
+    "groupadd", "groupdel", "groupmod",
+    "passwd", "chpasswd",
+    "chsh", "chfn",
+    # Mass process control
+    "killall",
+    # Dangerous network
+    "iptables", "ip6tables", "nft", "firewall-cmd",
+    "route",
+    # System modification
+    "sysctl",
+    "modprobe", "insmod", "rmmod",
+    "update-grub", "grub-install",
+]
+message = "{{.Command}} blocked - dangerous system command"
+
+# ============================================================================
+# REDIRECTS
+# ============================================================================
+
+[bash.redirects]
+respect_file_rules = true
+
+[[bash.redirects.allow]]
+paths = ["/dev/null", "/dev/stderr", "/dev/stdout", "alias:workspace", "alias:tmp"]
+
+[[bash.redirects.deny]]
+message = "Cannot redirect to system directories"
+paths = [
+    "path:/etc/**",
+    "path:/usr/**",
+    "path:/bin/**",
+    "path:/sbin/**",
+    "path:/lib/**",
+    "path:/lib64/**",
+    "path:/var/**",
+    "path:/boot/**",
+    "path:/root/**",
+]
+
+[[bash.redirects.ask]]
+message = "Redirecting to {{.FilePath}} - shell environment file"
+paths = ["path:$HOME/.zshenv"]
+
+[[bash.redirects.deny]]
+message = "Cannot modify shell configuration files"
+paths = [
+    "path:$HOME/.*rc",
+    "path:$HOME/.*shrc",
+    "path:$HOME/.*profile",
+    "path:$HOME/.*_profile",
+    "path:$HOME/.*login",
+    "path:$HOME/.*_login",
+    "path:$HOME/.*logout",
+    "path:$HOME/.*_logout",
+]
+
+# ============================================================================
+# SPECIFIC RULES
+# ============================================================================
+
+# --- chmod: Allow all operations including +x ---
+[[bash.allow.chmod]]
+
+# --- chown/chgrp: Ask (ownership changes are sensitive) ---
+[[bash.ask.chown]]
+message = "{{.ArgsStr}} - ownership change requires review"
+
+[[bash.ask.chgrp]]
+message = "{{.ArgsStr}} - group change requires review"
+
+# --- git: Block force push ---
+[[bash.ask.git.push]]
+message = "{{.ArgsStr}} - force push not allowed"
+args.any = ["--force", "flags:f", "--force-with-lease"]
+
+# --- git: Block hard reset ---
+[[bash.ask.git.reset]]
+message = "{{.ArgsStr}} - hard reset may lose work"
+args.any = ["--hard"]
+
+# --- git: Ask for clean -f ---
+[[bash.ask.git.clean]]
+message = "{{.ArgsStr}} - git clean requires review"
+args.any = ["flags:f", "--force"]
+
+# --- sed/awk: Block in-place editing ---
+[[bash.deny.sed]]
+message = "{{.ArgsStr}} - in-place editing not allowed, use Edit tool"
+args.any = ["flags:i", "--in-place"]
+
+[[bash.deny.awk]]
+message = "{{.ArgsStr}} - in-place editing not allowed, use Edit tool"
+args.any = ["flags:i"]
+
+# --- Block piping to shell from download commands ---
+[[bash.deny.bash]]
+message = "{{.Command}} receiving from {{index .PipesFrom 0}} - piping to shell not allowed; download, inspect, then execute"
+pipe.from = ["curl", "wget", "http"]
+
+[[bash.deny.sh]]
+message = "{{.Command}} receiving from {{index .PipesFrom 0}} - piping to shell not allowed; download, inspect, then execute"
+pipe.from = ["curl", "wget", "http"]
+
+[[bash.deny.zsh]]
+message = "{{.Command}} receiving from {{index .PipesFrom 0}} - piping to shell not allowed; download, inspect, then execute"
+pipe.from = ["curl", "wget", "http"]
+
+# --- docker/podman: Block privileged containers ---
+[[bash.deny.docker]]
+message = "{{.ArgsStr}} - privileged containers not allowed; drop --privileged or use specific --cap-add"
+args.any = ["--privileged"]
+
+[[bash.deny.podman]]
+message = "{{.ArgsStr}} - privileged containers not allowed; drop --privileged or use specific --cap-add"
+args.any = ["--privileged"]
+
+# --- fnm: Allow non-mutating commands ---
+# --- cat/find: Explicit named rules for higher specificity ---
+[[bash.allow.cat]]
+[[bash.allow.find]]
+
+# --- harvest-sessions: Allow session cleanup tool ---
+[[bash.allow.harvest-sessions]]
+
+# --- pkill: Only allow killing dev server processes ---
+[[bash.allow.pkill]]
+args.any = ["node", "tsx", "npm"]
+
+# --- kill: Only allow killing dev server processes (same restriction as pkill) ---
+[[bash.allow.kill]]
+args.any = ["node", "tsx", "npm"]
+
+# --- npm run: Allow npm run subcommand ---
+[[bash.allow.npm.run]]
+
+# --- command: Allow only -v (lookup, never executes target) ---
+[[bash.allow.command]]
+args.all = ["flags:v"]
+
+# --- osascript: Allow only `-e` scripts that are pure `display notification` ---
+# `osascript -e` can execute arbitrary AppleScript/JXA, including `do shell
+# script` for full shell access. Narrow auto-allow to -e payloads that consist
+# solely of a display notification statement (optionally with title, subtitle,
+# or sound name). Anything else — `do shell script`, script files, multi-
+# statement bodies — falls through to ask.
+[[bash.allow.osascript]]
+args.all = [
+    "-e",
+    're:(?s)^\s*display notification "[^"]*"(\s+(with title|subtitle|sound name) "[^"]*")*\s*$',
+]
+
+# --- brew: Allow read-only commands ---
+[[bash.allow.brew.search]]
+[[bash.allow.brew.info]]
+[[bash.allow.brew.list]]
+
+[[bash.allow.fnm.list-remote]]
+[[bash.allow.fnm.ls-remote]]
+[[bash.allow.fnm.list]]
+[[bash.allow.fnm.ls]]
+[[bash.allow.fnm.env]]
+[[bash.allow.fnm.completions]]
+[[bash.allow.fnm.current]]
+[[bash.allow.fnm.help]]
+[[bash.allow.fnm.use]]
+
+# --- ruff: all subcommands allowed (user opted into file-rewriting forms).
+[[bash.allow.ruff.check]]
+[[bash.allow.ruff.format]]
+[[bash.allow.ruff.analyze]]
+[[bash.allow.ruff.clean]]
+[[bash.allow.ruff.rule]]
+[[bash.allow.ruff.config]]
+[[bash.allow.ruff.linter]]
+[[bash.allow.ruff.version]]
+
+# --- influx: Allow read-only subcommands; prompt on writes/mutations ---
+# Env INFLUX_TOKEN is read-only (see ~/workspace/dotfiles/sync-secrets.sh).
+# Write token lives in 1Password at op://SSH Keys/Dotfiles Secrets/influx_token
+# — fetching it triggers a 1Password biometric prompt.
+[[bash.allow.influx.query]]
+[[bash.allow.influx.bucket.list]]
+[[bash.allow.influx.org.list]]
+[[bash.allow.influx.auth.list]]
+[[bash.allow.influx.ping]]
+[[bash.allow.influx.config]]
+[[bash.allow.influx.help]]
+[[bash.allow.influx.version]]
+
+[[bash.ask.influx.write]]
+message = "influx write requires the write token (op read 'op://SSH Keys/Dotfiles Secrets/influx_token')"
+
+[[bash.ask.influx.delete]]
+message = "influx delete requires the write token"
+
+[[bash.ask.influx.bucket.create]]
+[[bash.ask.influx.bucket.delete]]
+[[bash.ask.influx.bucket.update]]
+[[bash.ask.influx.auth.create]]
+[[bash.ask.influx.auth.delete]]
+
+# --- wildflower: block direct invocation of mutating subcommands ---
+# Watcher + update script are the sanctioned entry points:
+#   ~/.aeby/scripts/dotfiles-watcher.sh        (launchd/systemd daemon)
+#   ~/.aeby/scripts/dotfiles-update.sh         (gather → stash → pull → pop → sow)
+# Direct `wildflower gather|sow|till` bypasses the update script's pull-first
+# discipline and can overwrite unsown upstream changes with stale home content
+# (see 2026-04-20 incident; architecture in ~/.claude/docs/dotfiles.md).
+# --help and --version remain allowed for diagnosis.
+[[bash.allow.wildflower]]
+args.any = ["--help", "--version", "-h", "-v"]
+
+[[bash.deny.wildflower.gather]]
+message = "direct wildflower gather is denied; watcher handles routine gather, ~/.aeby/scripts/dotfiles-update.sh handles pull-side reconciliation"
+
+[[bash.deny.wildflower.sow]]
+message = "direct wildflower sow is denied; ~/.aeby/scripts/dotfiles-update.sh performs sow as part of the pull workflow"
+
+[[bash.deny.wildflower.till]]
+message = "direct wildflower till is denied; use ~/.aeby/scripts/dotfiles-update.sh"
+
+# --- ccq: redirect to sandboxed wrapper ---
+# Plain `ccq` runs arbitrary SQL against an in-memory DuckDB with
+# enable_external_access=true, which permits COPY TO/FROM on any path
+# the user can access, read_text/read_csv on any file, and httpfs for
+# network egress. That's a whole-home read/write exposure from a single
+# SQL string — unsafe for auto-approval.
+# ~/.aeby/scripts/ccq-safe.sh prepends SETs that allowlist only
+# ~/.claude/projects, disable external access, and lock the config.
+# See ~/.claude/docs/information-stores.md §ccq.
+[[bash.deny.ccq]]
+message = "ccq is sandbox-bypassable via DuckDB COPY/read_text/httpfs. Use ~/.aeby/scripts/ccq-safe.sh for piped SQL queries (same syntax, restricted to ~/.claude/projects). Plain ccq is for REPL/--data-dir/COPY TO — ask the user to run it directly."
+
+# --- sed -n '<range>p' for reading file sections — use Read / mdq instead ---
+# `sed -n '10,20p' file` and `sed -n '15p' file` are the classic file-paginate
+# patterns the Read tool serves natively (offset/limit), and mdq handles
+# markdown section extraction by heading. Deny so the agent surfaces the right
+# tool instead of silently shelling out to sed. Narrow match: both `-n` (as a
+# short flag, possibly grouped like `-ne`) AND a script arg that is a pure
+# `<N>[,<M>]p`. Non-range sed -n usage (e.g. `s/x/y/p`, `/regex/p`) still
+# falls through to allow.
+[[bash.deny.sed]]
+args.all = [
+    "flags:n",
+    "re:^[0-9]+(,[0-9]+)?p$",
+]
+message = "Use the Read tool (offset/limit) for line ranges, or mdq for markdown sections. Avoid sed -n '<range>p' for reading files."
+
+# --- git in dotfiles: limitation note ---
+# Ideally cc-allow would deny `git -C ~/workspace/dotfiles pull` and
+# `git -C ~/workspace/dotfiles add -A` to match ~/.claude/CLAUDE.md's
+# Dotfile Syncing section. However, cc-allow's subcommand extraction
+# does not reliably handle `git -C <path> <subcommand>` — when -C
+# precedes the subcommand, no git.<subcommand> rule matches. See
+# ~/.claude/docs/dotfiles.md §Architecture. Enforcement instead comes
+# from:
+#   1. The pre-push hook (.git/hooks/pre-push), which refuses pushes
+#      when the .last-update marker is stale.
+#   2. CLAUDE.md + dotfiles.md docs, which tell Claude to use
+#      ~/.aeby/scripts/dotfiles-update.sh and selective staging.
+# If cc-allow gains CWD-aware rule matching or better -C handling,
+# tighten this by denying git.pull / git.add with a dotfiles scope.
+
+# ============================================================================
+# FILE TOOL PERMISSIONS
+# ============================================================================
+
+[read]
+default = "ask"
+
+[read.allow]
+paths = [
+    "alias:project", "alias:tmp", "alias:claude-user-config",
+    "alias:notes", "alias:workspace",
+    "alias:aeby-scripts",
+    "path:$HOME/.aeby/logs/**",
+    "path:$HOME/.zshrc", "path:$HOME/.config/**",
+    "path:$HOME/.c/**", "path:$PROJECT_ROOT/.claude/**",
+    "path:$HOME/.claude.json",
+    "alias:windows-terminal-config",
+    "path:$HOME/.local/state/fnm_multishells/**",
+    "path:$HOME/.local/share/fnm/**",
+]
+
+[read.deny]
+paths = ["alias:sensitive-read", "alias:env-files", "path:$HOME/.c/state/*/creds/**"]
+message = "Cannot read {{.FileName}} - sensitive file"
+
+[edit]
+default = "ask"
+
+[edit.allow]
+paths = [
+    "alias:project", "alias:claude-user-config", "alias:tmp",
+    "path:$HOME/.tmux.conf", "alias:notes",
+    "alias:windows-terminal-config",
+]
+
+[edit.deny]
+paths = [
+    "path:$HOME/.bashrc", "path:$HOME/.bash_profile", "path:$HOME/.bash_login", "path:$HOME/.bash_logout",
+    "path:$HOME/.zshrc", "path:$HOME/.zprofile", "path:$HOME/.zlogin", "path:$HOME/.zlogout",
+    "path:$HOME/.profile",
+    "path:$HOME/.ssh/**",
+    "alias:env-files",
+    "path:$HOME/.c/state/*/creds/**",
+]
+message = "Cannot edit {{.FileName}} - sensitive file"
+
+[edit.ask]
+paths = ["path:$HOME/.zshenv"]
+message = "Editing {{.FileName}} - shell environment file"
+
+[write]
+default = "ask"
+
+[write.allow]
+paths = [
+    "alias:project", "alias:tmp", "alias:claude-user-config", "alias:notes",
+    "path:**/.git/index.lock", "path:**/.git/worktrees/*/index.lock",
+    "path:$HOME/workspace/**/node_modules",
+    "path:$HOME/workspace/**/.fix-tickets/**",
+]
+
+[write.ask]
+paths = ["path:$HOME/.zshenv"]
+message = "Writing {{.FilePath}} - shell environment file"
+
+[write.deny]
+paths = ["alias:sensitive-write", "alias:env-files", "path:$HOME/.c/state/*/creds/**"]
+message = "Cannot write to {{.FilePath}} - system directory"
+
+[webfetch]
+default = "allow"
+default_message = "URL fetch requires approval: {{.FilePath}}"
+
+[webfetch.safe_browsing]
+enabled = true
+
+[glob]
+respect_file_rules = true
+
+[grep]
+respect_file_rules = true
