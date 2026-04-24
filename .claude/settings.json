@@ -1,0 +1,251 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(cc-query:reflect)",
+      "WebSearch",
+      "mcp__atlassian__addCommentToJiraIssue",
+      "mcp__atlassian__createJiraIssue",
+      "mcp__atlassian__editJiraIssue",
+      "mcp__atlassian__getAccessibleAtlassianResources",
+      "mcp__atlassian__getJiraIssue",
+      "mcp__atlassian__getJiraIssueRemoteIssueLinks",
+      "mcp__atlassian__getJiraIssueTypeMetaWithFields",
+      "mcp__atlassian__getJiraProjectIssueTypesMetadata",
+      "mcp__atlassian__getTransitionsForJiraIssue",
+      "mcp__atlassian__getVisibleJiraProjects",
+      "mcp__atlassian__lookupJiraAccountId",
+      "mcp__atlassian__searchJiraIssuesUsingJql",
+      "mcp__atlassian__transitionJiraIssue",
+      "mcp__machinify__mfy_admin_access_list",
+      "mcp__machinify__mfy_admin_feature_list",
+      "mcp__machinify__mfy_admin_identity_list",
+      "mcp__machinify__mfy_admin_role_info",
+      "mcp__machinify__mfy_admin_role_list",
+      "mcp__machinify__mfy_audit_aging_rule_list",
+      "mcp__machinify__mfy_audit_config_get",
+      "mcp__machinify__mfy_audit_due_date_rule_list",
+      "mcp__machinify__mfy_chart_info",
+      "mcp__machinify__mfy_chart_list",
+      "mcp__machinify__mfy_cluster_info",
+      "mcp__machinify__mfy_cluster_list",
+      "mcp__machinify__mfy_cluster_pool_info",
+      "mcp__machinify__mfy_cluster_pool_list",
+      "mcp__machinify__mfy_contract_drg",
+      "mcp__machinify__mfy_contract_fee_schedule_list",
+      "mcp__machinify__mfy_contract_info",
+      "mcp__machinify__mfy_contract_provider",
+      "mcp__machinify__mfy_document_get",
+      "mcp__machinify__mfy_document_search",
+      "mcp__machinify__mfy_document_status",
+      "mcp__machinify__mfy_fitting_info",
+      "mcp__machinify__mfy_fitting_list",
+      "mcp__machinify__mfy_ops_schema_diff",
+      "mcp__machinify__mfy_ops_schema_last_applied",
+      "mcp__machinify__mfy_ops_site_config",
+      "mcp__machinify__mfy_ops_system_job_count",
+      "mcp__machinify__mfy_ops_system_job_list",
+      "mcp__machinify__mfy_pi_business_unit_info",
+      "mcp__machinify__mfy_pi_business_unit_list",
+      "mcp__machinify__mfy_pi_case_info",
+      "mcp__machinify__mfy_pi_case_list",
+      "mcp__machinify__mfy_pi_job_info",
+      "mcp__machinify__mfy_pi_job_list",
+      "mcp__machinify__mfy_pi_sentinel_info",
+      "mcp__machinify__mfy_pi_sentinel_list",
+      "mcp__machinify__mfy_project_info",
+      "mcp__machinify__mfy_project_list",
+      "mcp__machinify__mfy_table_describe",
+      "mcp__machinify__mfy_table_list",
+      "mcp__machinify__mfy_table_query",
+      "mcp__machinify__mfy_table_search",
+      "mcp__machinify__mfy_task_info",
+      "mcp__machinify__mfy_task_list",
+      "mcp__machinify__mfy_workflow_instance_info",
+      "mcp__machinify__mfy_workflow_instance_list",
+      "mcp__machinify__mfy_workflow_template_list",
+      "mcp__figma__get_design_context",
+      "mcp__figma__get_screenshot",
+      "mcp__figma__get_metadata",
+      "mcp__figma__get_variable_defs",
+      "mcp__figma__get_figjam",
+      "mcp__figma__get_code_connect_map",
+      "mcp__figma__get_code_connect_suggestions",
+      "mcp__figma__search_design_system",
+      "mcp__figma__whoami",
+      "mcp__figma__use_figma",
+      "mcp__figma__add_code_connect_map",
+      "mcp__figma__send_code_connect_mappings",
+      "mcp__plugin_slack_slack__slack_read_canvas",
+      "mcp__plugin_slack_slack__slack_read_channel",
+      "mcp__plugin_slack_slack__slack_read_thread",
+      "mcp__plugin_slack_slack__slack_read_user_profile",
+      "mcp__plugin_slack_slack__slack_search_channels",
+      "mcp__plugin_slack_slack__slack_search_public",
+      "mcp__plugin_slack_slack__slack_search_public_and_private",
+      "mcp__plugin_slack_slack__slack_search_users",
+      "mcp__plugin_slack_slack__slack_update_canvas",
+      "mcp__plugin_slack_slack__slack_send_message_draft"
+    ],
+    "deny": []
+  },
+  "model": "opus[1m]",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook session-start",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook session-end"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook notification-waiting",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Read|Write|Edit|WebFetch|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/migrate-permissions.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Read|Write|Edit|WebFetch|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cc-allow --hook"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/validate-config.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook notification-waiting",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook user-prompt",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook post-bash",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Read|Write|Edit|WebFetch|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.local/bin/cc-allow-postuse",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/validate-config.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c hook stop",
+            "async": true
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "clangd-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "lua-lsp@claude-plugins-official": true,
+    "cc-query@cc-query-dev": true,
+    "frontend-design@claude-plugins-official": true,
+    "figma@claude-plugins-official": true,
+    "slack@claude-plugins-official": true,
+    "cc-replay@cc-replay": true
+  },
+  "extraKnownMarketplaces": {
+    "cc-replay": {
+      "source": {
+        "source": "github",
+        "repo": "vlognow/cc-replay"
+      }
+    }
+  },
+  "spinnerVerbs": {
+    "mode": "replace",
+    "verbs": [
+      "Lying"
+    ]
+  },
+  "alwaysThinkingEnabled": true,
+  "skipDangerousModePermissionPrompt": true,
+  "skipAutoPermissionPrompt": true
+}

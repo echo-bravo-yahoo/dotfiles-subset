@@ -1,0 +1,107 @@
+#!/bin/bash
+# amq-notify — watch an AMQ inbox, fire OS notifications
+# Usage: amq-notify [--me handle] [--root path] [--interval seconds]
+
+set -euo pipefail
+
+ME="${AMQ_NOTIFY_ME:-ashton}"
+ROOT="${AMQ_NOTIFY_ROOT:-}"
+INTERVAL="${AMQ_NOTIFY_INTERVAL:-10}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --me)       ME="$2"; shift 2 ;;
+    --root)     ROOT="$2"; shift 2 ;;
+    --interval) INTERVAL="$2"; shift 2 ;;
+    -h|--help)
+      echo "Usage: amq-notify [--me handle] [--root path] [--interval seconds]"
+      echo "Watch an AMQ inbox and fire OS notifications for new messages."
+      exit 0
+      ;;
+    *) echo "Unknown flag: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Resolve root from git if not provided
+if [ -z "$ROOT" ]; then
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -z "$toplevel" ]; then
+    echo "Not in a git repo and --root not specified" >&2
+    exit 1
+  fi
+  # Follow to main checkout if in a worktree
+  common="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ "$common" != ".git" ] && [ -n "$common" ]; then
+    toplevel="$(dirname "$common")"
+  fi
+  ROOT="$toplevel/.agent-mail"
+fi
+
+inbox="$ROOT/agents/$ME/inbox/new"
+
+if [ ! -d "$inbox" ]; then
+  echo "Inbox not found: $inbox" >&2
+  exit 1
+fi
+
+# Platform-specific notification function
+if [ "$(uname)" = "Darwin" ]; then
+  notify() {
+    local priority="$1" title="$2" body="$3"
+    local sound="Ping"
+    [ "$priority" = "urgent" ] && sound="Sosumi"
+    osascript -e "display notification \"$body\" with title \"$title\" sound name \"$sound\"" 2>/dev/null
+  }
+elif command -v notify-send >/dev/null 2>&1; then
+  notify() {
+    local priority="$1" title="$2" body="$3"
+    local urgency="normal"
+    [ "$priority" = "urgent" ] && urgency="critical"
+    notify-send --urgency="$urgency" "$title" "$body" 2>/dev/null
+  }
+elif command -v wslpath >/dev/null 2>&1; then
+  notify() {
+    local _priority="$1" title="$2" body="$3"
+    powershell.exe -Command "
+      [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+      \$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+      \$xml.GetElementsByTagName('text')[0].AppendChild(\$xml.CreateTextNode('$title')) | Out-Null
+      \$xml.GetElementsByTagName('text')[1].AppendChild(\$xml.CreateTextNode('$body')) | Out-Null
+      [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AMQ').Show([Windows.UI.Notifications.ToastNotification]::new(\$xml))
+    " 2>/dev/null
+  }
+else
+  notify() {
+    local _priority="$1" title="$2" body="$3"
+    echo "[$title] $body"
+  }
+fi
+
+echo "amq-notify: watching $inbox (every ${INTERVAL}s)" >&2
+
+# Track seen files to avoid re-notifying (portable — no associative arrays)
+seen_dir="${TMPDIR:-/tmp}/amq-notify-$$"
+mkdir -p "$seen_dir"
+trap 'rm -rf "$seen_dir"' EXIT INT TERM
+
+while true; do
+  for msg in "$inbox"/*.md; do
+    [ -f "$msg" ] || continue
+
+    # Skip already-notified files
+    basename="$(basename "$msg")"
+    if [ -f "$seen_dir/$basename" ]; then
+      continue
+    fi
+    : > "$seen_dir/$basename"
+
+    subject="$(sed -n 's/.*"subject": *"\([^"]*\)".*/\1/p' "$msg" | head -1)"
+    from="$(sed -n 's/.*"from": *"\([^"]*\)".*/\1/p' "$msg" | head -1)"
+    priority="$(sed -n 's/.*"priority": *"\([^"]*\)".*/\1/p' "$msg" | head -1)"
+    kind="$(sed -n 's/.*"kind": *"\([^"]*\)".*/\1/p' "$msg" | head -1)"
+
+    notify "${priority:-normal}" "AMQ: ${kind:-message} from ${from:-unknown}" "${subject:-New message}"
+  done
+
+  sleep "$INTERVAL"
+done

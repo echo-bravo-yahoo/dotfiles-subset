@@ -1,0 +1,117 @@
+{
+  "version": 2,
+  "plugins": {
+    "typescript-lsp@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/typescript-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-02-02T18:01:15.237Z",
+        "lastUpdated": "2026-03-23T21:06:37.918Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      },
+      {
+        "scope": "user",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/typescript-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-03-24T17:52:51.886Z",
+        "lastUpdated": "2026-03-24T17:52:51.886Z",
+        "gitCommitSha": "79caa0d824acb760fd9c023acb39c6c7da5ee7fc"
+      }
+    ],
+    "clangd-lsp@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-02-23T18:42:57.817Z",
+        "lastUpdated": "2026-03-23T21:06:37.918Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      }
+    ],
+    "rust-analyzer-lsp@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-02-26T06:15:11.855Z",
+        "lastUpdated": "2026-03-23T21:06:37.918Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      },
+      {
+        "scope": "user",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-03-26T02:51:33.785Z",
+        "lastUpdated": "2026-03-26T02:51:33.785Z"
+      }
+    ],
+    "lua-lsp@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/lua-lsp/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-03-01T22:11:05.659Z",
+        "lastUpdated": "2026-03-23T21:06:37.918Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      }
+    ],
+    "cc-query@cc-query-dev": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/cc-query-dev/cc-query/0.6.1",
+        "version": "0.6.1",
+        "installedAt": "2026-03-22T23:09:37.488Z",
+        "lastUpdated": "2026-03-23T21:06:37.918Z",
+        "gitCommitSha": "a5b79b153035a09ffcb371146961c720b9532b8d"
+      }
+    ],
+    "frontend-design@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/frontend-design/unknown",
+        "version": "unknown",
+        "installedAt": "2026-03-23T15:30:58.787Z",
+        "lastUpdated": "2026-03-25T15:34:22.511Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      }
+    ],
+    "figma@claude-plugins-official": [
+      {
+        "scope": "project",
+        "projectPath": "/Users/ashton.eby",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/figma/2.1.7",
+        "version": "2.1.7",
+        "installedAt": "2026-03-23T21:06:38.546Z",
+        "lastUpdated": "2026-04-13T18:07:09.528Z",
+        "gitCommitSha": "f046182e32c8160b1254ad12ec8318f9a9aa50b5"
+      }
+    ],
+    "slack@claude-plugins-official": [
+      {
+        "scope": "user",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/claude-plugins-official/slack/1.0.0",
+        "version": "1.0.0",
+        "installedAt": "2026-03-24T02:18:07.324Z",
+        "lastUpdated": "2026-04-01T03:20:28.494Z",
+        "gitCommitSha": "e30768372b4150ca1bc0839d93283e8edc30d60d"
+      }
+    ],
+    "cc-replay@cc-replay": [
+      {
+        "scope": "user",
+        "installPath": "/Users/ashton.eby/.claude/plugins/cache/cc-replay/cc-replay/0.2.0",
+        "version": "0.2.0",
+        "installedAt": "2026-03-25T15:35:06.798Z",
+        "lastUpdated": "2026-03-25T15:35:06.798Z",
+        "gitCommitSha": "d50f2c37eeb3317f92b8390bc9c72fbae7186e64"
+      }
+    ]
+  }
+}

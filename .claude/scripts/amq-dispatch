@@ -1,0 +1,743 @@
+#!/usr/bin/env -S python3 -u
+"""amq-dispatch — read pipeline.toml, spawn agents, evaluate routes.
+
+Usage: amq-dispatch <slug> [--config path] [--plan file]
+"""
+
+import argparse
+import atexit
+import hashlib
+import json
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import time
+import tomllib
+import uuid
+from pathlib import Path
+
+
+def run(cmd, **kwargs):
+    """Run a command, return CompletedProcess."""
+    return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, **kwargs)
+
+
+def git_toplevel():
+    """Resolve the main checkout root (follows worktrees to common dir)."""
+    r = run(["git", "rev-parse", "--git-common-dir"])
+    if r.returncode != 0:
+        sys.exit("Not in a git repository")
+    common = r.stdout.strip()
+    if common == ".git":
+        r2 = run(["git", "rev-parse", "--show-toplevel"])
+        return r2.stdout.strip()
+    return str(Path(common).parent)
+
+
+def resolve_am_root(slug):
+    """Each pipeline gets its own AMQ session: .agent-mail/<slug>/"""
+    return os.path.join(git_toplevel(), ".agent-mail", slug)
+
+
+def load_pipeline(config_path):
+    with open(config_path, "rb") as f:
+        data = tomllib.load(f)
+    if data.get("version") != "1":
+        sys.exit(f"Unsupported pipeline version: {data.get('version')}")
+    return data
+
+
+def amq(*args):
+    """Run an amq CLI command."""
+    r = run(["amq", *args])
+    if r.returncode != 0 and r.stderr:
+        print(f"amq warning: {r.stderr.strip()}", file=sys.stderr)
+    return r
+
+
+def init_mailboxes(am_root, agents):
+    """Initialize AMQ session root with agent handles (no user handle)."""
+    names = ["dispatcher"] + [a["name"] for a in agents]
+    unique = sorted(set(names))
+    amq("init", "--root", am_root, "--agents", ",".join(unique), "--force")
+
+
+_worktree_setup_cmd = None  # set from pipeline config in main()
+
+
+def _run_worktree_setup(wt_path, toplevel):
+    """Run the pipeline's worktree_setup command if configured."""
+    if _worktree_setup_cmd:
+        print(f"  running worktree setup in {os.path.basename(wt_path)}...", file=sys.stderr)
+        env = {**os.environ, "REPO_ROOT": toplevel}
+        r = subprocess.run(_worktree_setup_cmd, shell=True, cwd=wt_path,
+                           capture_output=True, text=True, env=env)
+        if r.returncode != 0:
+            print(f"  worktree setup warning: exit {r.returncode}", file=sys.stderr)
+            if r.stderr:
+                print(f"  {r.stderr[:200]}", file=sys.stderr)
+
+
+def create_worktrees(slug, agents, toplevel):
+    """Create git worktrees based on agent config. Returns {agent_name: workdir}."""
+    workdirs = {}
+    shared_worktrees = {}  # name -> path
+
+    for agent in agents:
+        wt = agent.get("worktree", {})
+        mode = wt.get("mode", "none")
+
+        if mode == "none":
+            workdirs[agent["name"]] = toplevel
+        elif mode == "shared":
+            wt_name = wt.get("name", agent["name"])
+            if wt_name not in shared_worktrees:
+                wt_path = os.path.join(toplevel, ".worktrees", f"{slug}-{wt_name}")
+                branch = f"agent/{slug}-{wt_name}"
+                if not os.path.exists(wt_path):
+                    run(["git", "worktree", "add", wt_path, "-B", branch, "HEAD"], cwd=toplevel)
+                    _run_worktree_setup(wt_path, toplevel)
+                shared_worktrees[wt_name] = wt_path
+            workdirs[agent["name"]] = shared_worktrees[wt_name]
+        elif mode == "dedicated":
+            wt_path = os.path.join(toplevel, ".worktrees", f"{slug}-{agent['name']}")
+            branch = f"agent/{slug}-{agent['name']}"
+            if not os.path.exists(wt_path):
+                run(["git", "worktree", "add", wt_path, "-B", branch, "HEAD"], cwd=toplevel)
+                _run_worktree_setup(wt_path, toplevel)
+            workdirs[agent["name"]] = wt_path
+
+    return workdirs
+
+
+def generate_permissions(agent, workdir, all_agents):
+    """Write cc-allow session config for an agent.
+
+    Pipeline permissions are structured as:
+        [agents.permissions.<tool>.<action>]
+        key = [values]
+
+    e.g. permissions.bash.allow.commands = ["node"]
+         permissions.write.deny.paths = ["path:src/**"]
+
+    This maps to cc-allow TOML sections:
+        [bash.allow]
+        commands = ["node"]
+
+    Also generates deny rules from sends_to to restrict who the agent
+    can address via amq send.
+    """
+    session_dir = os.path.join(workdir, ".config", "cc-allow", "sessions")
+    os.makedirs(session_dir, exist_ok=True)
+
+    lines = ['version = "2.0"', ""]
+
+    # Explicit permissions from pipeline config
+    perms = agent.get("permissions", {})
+    for tool, actions in perms.items():
+        if not isinstance(actions, dict):
+            continue
+        for action, fields in actions.items():
+            if not isinstance(fields, dict):
+                continue
+            lines.append(f"[{tool}.{action}]")
+            for k, v in fields.items():
+                if isinstance(v, list):
+                    items = ", ".join(f'"{i}"' for i in v)
+                    lines.append(f'{k} = [{items}]')
+                elif isinstance(v, str):
+                    lines.append(f'{k} = "{v}"')
+            lines.append("")
+
+    # Deny read/write to $HOME (prevents agents from searching outside the repo)
+    if perms.get("read", {}).get("allow"):
+        lines.append("[read.deny]")
+        lines.append('paths = ["path:$HOME"]')
+        lines.append('message = "Cannot read outside project — search within your working directory"')
+        lines.append("")
+
+    # sends_to enforcement: replace blanket "amq" allow with precise subcommand rules.
+    # amq drain/list/read are always allowed. amq send is restricted to sends_to handles.
+    # Remove "amq" from base commands list (it would override subcommand rules).
+    sends_to = agent.get("sends_to")
+    if sends_to:
+        # Strip "amq" from any [bash.allow] commands list already emitted
+        # (it's in the pipeline config but we need subcommand-level control)
+        for i, line in enumerate(lines):
+            if line.strip() == '"amq",' or line.strip() == '"amq"':
+                lines[i] = ""
+            # Handle it as part of a comma-separated list
+            elif '"amq"' in line and "commands" in line:
+                lines[i] = line.replace('"amq", ', '').replace(', "amq"', '').replace('"amq"', '')
+
+        # Allow amq subcommands that don't involve sending
+        lines.append("[[bash.allow.amq.drain]]")
+        lines.append("")
+        lines.append("[[bash.allow.amq.list]]")
+        lines.append("")
+        lines.append("[[bash.allow.amq.read]]")
+        lines.append("")
+
+        # Deny all amq send (specificity 150), then allow only to permitted handles (155)
+        lines.append("[[bash.deny.amq.send]]")
+        lines.append('message = "Send to ' + ", ".join(sorted(sends_to)) + ' only"')
+        lines.append("")
+        for handle in sorted(sends_to):
+            lines.append("[[bash.allow.amq.send]]")
+            lines.append(f'args.any = ["{handle}"]')
+            lines.append("")
+
+    session_id = agent.get("_session_id", agent["name"])
+    config_path = os.path.join(session_dir, f"{session_id}.toml")
+    with open(config_path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def spawn_agent(slug, agent, am_root, thread, workdir):
+    """Spawn an agent in a tmux window."""
+    name = agent["name"]
+    window_name = f"{slug}-{name}"
+    model = agent.get("model", "")
+    agent_def = agent.get("agent_def", "")
+    session_id = agent.get("_session_id", "")
+
+    # Build the claude command
+    claude_args = ["claude"]
+    if session_id:
+        claude_args.extend(["--session-id", session_id])
+    if model:
+        claude_args.extend(["--model", model])
+    if agent_def:
+        agent_def_path = os.path.join(workdir, ".claude", "agents", f"{agent_def}.md")
+        if os.path.exists(agent_def_path):
+            claude_args.extend(["--agent", agent_def])
+    inline_prompt = agent.get("prompt", "")
+    if inline_prompt and not agent_def:
+        claude_args.extend(["--system-prompt", inline_prompt])
+    claude_args.extend(["--append-system-prompt",
+        "You are an autonomous agent in a multi-agent pipeline. "
+        "NEVER end your turn with a summary. Summaries are NOT completion. "
+        "After completing work, your NEXT action must be sending an AMQ message — "
+        "not writing a summary. If you catch yourself summarizing, IMMEDIATELY "
+        "run the amq send command before doing anything else. "
+        "Your turn is only done when you have sent all required AMQ messages."])
+
+    # Environment setup + claude invocation
+    env_exports = (
+        f'export C_EPHEMERAL=1 AM_ROOT="{am_root}" AM_ME="{name}" AM_THREAD="{thread}"'
+    )
+    on_complete = agent.get("instructions", {}).get("on_complete", "")
+
+    # Build prompt as numbered checklist
+    steps = ["Drain your inbox (returns full message bodies): amq drain --me $AM_ME --include-body --root $AM_ROOT"]
+    steps.append("Follow your agent definition to complete the work.")
+    if isinstance(on_complete, str) and on_complete:
+        steps.append(f"CRITICAL — Send your completion message: {on_complete}")
+        steps.append("If you find yourself summarizing work, STOP and send the message FIRST. Summarize after.")
+    prompt = "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
+
+    cmd = f'cd "{workdir}" && {env_exports} && {shlex.join(claude_args)} {shlex.quote(prompt)}'
+
+    # Check if window already exists
+    check = run(["tmux", "list-windows", "-F", "#{window_name}"])
+    if window_name in (check.stdout or ""):
+        print(f"  {window_name}: already running", file=sys.stderr)
+        return
+
+    run(["tmux", "new-window", "-d", "-n", window_name, cmd])
+    print(f"  {window_name}: spawned in {workdir}", file=sys.stderr)
+
+
+def send_plan(am_root, thread, plan_path, agents):
+    """Send the plan as the first message in the thread."""
+    plan_text = Path(plan_path).read_text()
+    recipients = ",".join(a["name"] for a in agents)
+    amq("send", "--me", "dispatcher", "--to", recipients,
+        "--kind", "brainstorm", "--thread", thread,
+        "--subject", f"Plan: {thread}",
+        "--body", plan_text,
+        "--root", am_root)
+
+
+def send_todos(am_root, thread, agents, plan_path):
+    """Send kind:todo to first-wave agents (subscribe to 'todo', not deferred)."""
+    plan_text = Path(plan_path).read_text() if plan_path else "See plan in thread."
+    for agent in agents:
+        subs = agent.get("subscribes_to", [])
+        if "todo" in subs and not agent.get("deferred", False):
+            startup = agent.get("instructions", {}).get("startup", "")
+            amq("send", "--me", "dispatcher", "--to", agent["name"],
+                "--kind", "todo", "--thread", thread,
+                "--subject", f"Assignment: {agent['name']}",
+                "--body", f"{startup}\n\nRefer to the plan message in thread {thread} for full context.",
+                "--root", am_root)
+            print(f"  Sent todo → {agent['name']}", file=sys.stderr)
+
+
+def interpolate(template, msg):
+    """Replace {var} placeholders with message fields."""
+    replacements = {
+        "from": msg.get("from", ""),
+        "to": ",".join(msg.get("to", [])) if isinstance(msg.get("to"), list) else msg.get("to", ""),
+        "subject": msg.get("subject", ""),
+        "kind": msg.get("kind", ""),
+        "thread": msg.get("thread", ""),
+        "body": msg.get("body", ""),
+        "labels": ",".join(msg.get("labels", [])),
+    }
+    result = template
+    for key, val in replacements.items():
+        result = result.replace(f"{{{key}}}", str(val))
+    return result
+
+
+def parse_amq_json(line):
+    """Parse a JSON message from amq list --json."""
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def matches_route(route, msg):
+    """Check if a message matches a route's 'on' filter."""
+    on = route.get("on", {})
+    if "kind" in on and msg.get("kind") != on["kind"]:
+        return False
+    if "labels" in on:
+        msg_labels = set(msg.get("labels", []))
+        if not all(lbl in msg_labels for lbl in on["labels"]):
+            return False
+    if "from" in on and msg.get("from") != on["from"]:
+        return False
+    return True
+
+
+def execute_action(action, msg, slug, pipeline, agents, am_root, workdirs):
+    """Execute a single route action."""
+    if action == "notify":
+        subject = msg.get("subject", "New message")
+        sender = msg.get("from", "unknown")
+        kind = msg.get("kind", "message")
+        priority = msg.get("priority", "normal")
+        sound = "Sosumi" if priority == "urgent" else "Ping"
+        title = f"AMQ: {kind} from {sender}"
+        subprocess.run([
+            "osascript", "-e",
+            f'display notification "{subject}" with title "{title}" sound name "{sound}"'
+        ], capture_output=True)
+
+    elif action.startswith("agent:"):
+        target = action[6:]
+        # Check if agent is already running
+        check = run(["tmux", "list-windows", "-F", "#{window_name}"])
+        window_name = f"{slug}-{target}"
+        if window_name not in (check.stdout or ""):
+            # Find agent config and spawn
+            for agent in agents:
+                if agent["name"] == target:
+                    thread = pipeline.get("pipeline", {}).get("thread_prefix", "topic") + f"/{slug}"
+                    spawn_agent(slug, agent, am_root, thread, workdirs.get(target, workdirs.get("__toplevel__", ".")))
+                    break
+
+    elif action.startswith("run:"):
+        cmd = interpolate(action[4:], msg)
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                           input=msg.get("body", ""))
+        if r.returncode != 0:
+            print(f"  run action failed (exit {r.returncode}): {cmd}", file=sys.stderr)
+            if r.stderr:
+                print(f"  stderr: {r.stderr[:200]}", file=sys.stderr)
+
+    elif action == "shutdown":
+        print(f"\nPipeline complete: {msg.get('subject', 'done')}", file=sys.stderr)
+        for agent in agents:
+            window_name = f"{slug}-{agent['name']}"
+            run(["tmux", "kill-window", "-t", window_name])
+            print(f"  killed {window_name}", file=sys.stderr)
+        raise SystemExit(0)
+
+    elif action.startswith("amq:"):
+        parts = action[4:].split(":", 1)
+        if len(parts) == 2:
+            kind, to = parts
+            amq("send", "--me", "dispatcher", "--to", to,
+                "--kind", kind, "--thread", msg.get("thread", ""),
+                "--subject", msg.get("subject", ""),
+                "--body", msg.get("body", ""),
+                "--root", am_root)
+
+
+def find_matching_gate(agent, msg):
+    """Find the first gate that matches a message (by 'on' filter), or the first gate with no filter."""
+    gates = agent.get("gates", [])
+    for gate in gates:
+        on_filter = gate.get("on")
+        if on_filter is None:
+            return gate  # no filter = matches all
+        # Check label filter
+        if "labels" in on_filter:
+            msg_labels = set(msg.get("labels", []))
+            if all(lbl in msg_labels for lbl in on_filter["labels"]):
+                return gate
+        elif "kind" in on_filter:
+            if msg.get("kind") == on_filter["kind"]:
+                return gate
+    # No matching gate — return a passthrough (forward without checks)
+    return None
+
+
+def process_gate(msg, agent, gate, agents, slug, am_root, workdirs, pipeline):
+    """Run gate commands and forward or bounce."""
+    sender = agent["name"]
+    print(f"    process_gate entered for {sender}", file=sys.stderr)
+    workdir = workdirs.get(sender, ".")
+    thread = msg.get("thread", "")
+
+    # Run gate commands (if any)
+    commands = gate.get("commands", [])
+    failures = []
+    for cmd_spec in commands:
+        if not cmd_spec.startswith("run:"):
+            cmd_spec = f"run:{cmd_spec}"
+        cmd = cmd_spec[4:]
+        toplevel = os.path.abspath(workdirs.get("__toplevel__", "."))
+        env = {**os.environ, "REPO_ROOT": toplevel}
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w+', suffix='.gate.log', delete=False) as tf:
+                gate_log = tf.name
+            with open(gate_log, 'w') as out:
+                r = subprocess.run(cmd, shell=True, stdout=out, stderr=subprocess.STDOUT,
+                                   cwd=workdir, env=env, stdin=subprocess.DEVNULL,
+                                   timeout=3600)
+            with open(gate_log) as f:
+                r.stdout = f.read()
+            r.stderr = None
+            os.unlink(gate_log)
+        except subprocess.TimeoutExpired as e:
+            output = ""
+            try:
+                with open(gate_log) as f:
+                    output = f.read()[-500:]
+                os.unlink(gate_log)
+            except Exception:
+                pass
+            failures.append(f"$ {cmd} → timed out after {e.timeout}s\n{output}")
+            continue
+        if r.returncode != 0:
+            output = ((r.stdout or "") + (r.stderr or "")).strip()
+            lines = output.split("\n")
+            if len(lines) > 50:
+                output = "\n".join(lines[-50:])
+            failures.append(f"$ {cmd} → exit {r.returncode}\n{output}")
+
+    if failures:
+        # Gate failed — bounce to sender
+        on_fail = gate.get("on_fail", {})
+        if on_fail.get("bounce"):
+            amq("send", "--me", "dispatcher", "--to", sender,
+                "--kind", "status", "--thread", thread,
+                "--labels", "gate-fail",
+                "--subject", f"Gate failed: {len(failures)} check(s)",
+                "--body", "\n\n---\n\n".join(failures),
+                "--root", am_root)
+            print(f"  gate-fail → {sender} ({len(failures)} check(s))", file=sys.stderr)
+    else:
+        # Gate passed — forward
+        on_pass = gate.get("on_pass", {})
+        forward_to = on_pass.get("forward_to")
+        if forward_to:
+            project = on_pass.get("project")
+            body = msg.get("body") or ""
+            send_args = [
+                "send", "--me", "dispatcher", "--to", forward_to,
+                "--kind", msg.get("kind", "status"), "--thread", thread,
+                "--subject", msg.get("subject", ""),
+                "--root", am_root,
+            ]
+            send_args.extend(["--body", body if body else "(forwarded)"])
+            if msg.get("labels"):
+                send_args.extend(["--labels", ",".join(msg["labels"])])
+            if project:
+                send_args.extend(["--project", project])
+            print(f"    sending: amq {' '.join(send_args[:6])}...", file=sys.stderr)
+            fwd_r = amq(*send_args)
+            print(f"    send rc={fwd_r.returncode} stderr={fwd_r.stderr[:100] if fwd_r.stderr else 'none'}", file=sys.stderr)
+            print(f"  gate-pass → {forward_to}" + (f" --project {project}" if project else ""), file=sys.stderr)
+
+        # Check routes on the passed message (e.g., shutdown on decision)
+        routes = pipeline.get("routes", [])
+        for route in routes:
+            if matches_route(route, msg):
+                for action in route.get("actions", []):
+                    execute_action(action, msg, slug, pipeline, agents, am_root, workdirs)
+
+
+def route_evaluator_tick(slug, pipeline, agents, am_root, workdirs):
+    """One tick of the route evaluator — scan inboxes, match routes, execute actions."""
+    routes = pipeline.get("routes", [])
+
+    # Scan all agent inboxes + dispatcher inbox
+    all_handles = ["dispatcher"] + [a["name"] for a in agents]
+    for handle in all_handles:
+        r = amq("list", "--me", handle, "--new", "--json", "--root", am_root)
+        if r.returncode != 0 or not r.stdout.strip():
+            continue
+
+        # amq list --json returns a JSON array, not newline-delimited objects
+        try:
+            messages = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            messages = []
+        if not isinstance(messages, list):
+            messages = [messages] if messages else []
+
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+
+            # Dispatcher inbox: process gates, then check routes
+            if handle == "dispatcher":
+                sender_name = msg.get("from", "")
+                print(f"  dispatcher msg from={sender_name} kind={msg.get('kind','')} id={msg.get('id','')[:20]}", file=sys.stderr)
+                sender_agent = next((a for a in agents if a["name"] == sender_name), None)
+                print(f"    agent found: {sender_agent['name'] if sender_agent else 'NONE'}", file=sys.stderr)
+                if sender_agent:
+                    gate = find_matching_gate(sender_agent, msg)
+                    print(f"    gate: {'matched' if gate else 'NONE'} forward_to={gate.get('on_pass', {}).get('forward_to') if gate else 'N/A'}", file=sys.stderr)
+                    if gate:
+                        # Consume the message and process the gate
+                        print(f"    draining...", file=sys.stderr)
+                        drain_r = amq("drain", "--me", "dispatcher", "--limit", "1", "--root", am_root)
+                        print(f"    drain rc={drain_r.returncode} out={drain_r.stdout[:80] if drain_r.stdout else 'empty'}", file=sys.stderr)
+                        try:
+                            process_gate(msg, sender_agent, gate, agents, slug, am_root, workdirs, pipeline)
+                        except Exception as e:
+                            print(f"  gate error for {sender_name}: {e}", file=sys.stderr)
+                            import traceback; traceback.print_exc(file=sys.stderr)
+                        continue
+                    else:
+                        # No matching gate — consume and forward body as-is (passthrough)
+                        amq("drain", "--me", "dispatcher", "--limit", "1", "--root", am_root)
+
+                # Check routes on dispatcher messages (e.g., shutdown on decision)
+                for route in routes:
+                    if matches_route(route, msg):
+                        for action in route.get("actions", []):
+                            execute_action(action, msg, slug, pipeline, agents, am_root, workdirs)
+                continue
+
+            # Agent inboxes: check if any non-running agent subscribes to this message kind
+            kind = msg.get("kind", "")
+            for agent in agents:
+                if kind in agent.get("subscribes_to", []) and handle == agent["name"]:
+                    window_name = f"{slug}-{agent['name']}"
+                    check = run(["tmux", "list-windows", "-F", "#{window_name}"])
+                    if window_name not in (check.stdout or ""):
+                        thread = pipeline.get("pipeline", {}).get("thread_prefix", "topic") + f"/{slug}"
+                        wd = workdirs.get(agent["name"], workdirs.get("__toplevel__", "."))
+                        spawn_agent(slug, agent, am_root, thread, wd)
+
+
+def detect_idle_agents(slug, agents, am_root, agent_states, idle_threshold=18):
+    """Check for idle agents and nudge them via tmux send-keys."""
+    for agent in agents:
+        window_name = f"{slug}-{agent['name']}"
+
+        # Check if window exists
+        check = run(["tmux", "list-windows", "-F", "#{window_name}"])
+        if window_name not in (check.stdout or ""):
+            continue
+
+        # Capture full pane and hash it
+        r = run(["tmux", "capture-pane", "-t", window_name, "-p"])
+        pane_hash = hashlib.md5((r.stdout or "").encode()).hexdigest()
+
+        state = agent_states.setdefault(window_name, {
+            "last_hash": None, "idle_ticks": 0, "nudge_count": 0,
+        })
+
+        if pane_hash == state["last_hash"]:
+            state["idle_ticks"] += 1
+        else:
+            state["idle_ticks"] = 0
+            state["last_hash"] = pane_hash
+            # Activity detected — reset nudge count so future stalls get nudged
+            state["nudge_count"] = 0
+
+        if state["idle_ticks"] >= idle_threshold and state["nudge_count"] < 2:
+            # Check mailbox state to decide whether a nudge is warranted
+            name = agent["name"]
+            sent = run(["ls", os.path.join(am_root, "agents", name, "outbox", "sent")])
+            new_inbox = run(["ls", os.path.join(am_root, "agents", name, "inbox", "new")])
+            has_sent = bool(sent.stdout.strip())
+            has_new = bool(new_inbox.stdout.strip())
+
+            if has_sent and not has_new:
+                # Agent sent messages and no new responses — actually done
+                continue
+
+            nudge_agent(agent, window_name)
+            state["idle_ticks"] = 0
+            state["nudge_count"] += 1
+
+
+def nudge_agent(agent, window_name):
+    """Send a follow-up prompt to an idle agent via tmux."""
+    on_complete = agent.get("instructions", {}).get("on_complete", "")
+
+    if on_complete:
+        msg = (
+            "You stopped. First: drain your inbox for any responses — "
+            "amq drain --me $AM_ME --include-body --root $AM_ROOT — "
+            "then review your agent definition. Have you completed ALL steps? "
+            f"If not, continue. When fully done: {on_complete}"
+        )
+    else:
+        msg = (
+            "You stopped. First: drain your inbox for any responses — "
+            "amq drain --me $AM_ME --include-body --root $AM_ROOT — "
+            "then review your agent definition. Have you completed ALL steps, "
+            "including sending any required AMQ messages? If not, continue now."
+        )
+
+    # tmux send-keys: -l for literal text, then Enter to submit
+    run(["tmux", "send-keys", "-t", window_name, "-l", msg])
+    time.sleep(0.3)
+    run(["tmux", "send-keys", "-t", window_name, "Enter"])
+
+    print(f"  nudge → {window_name}", file=sys.stderr)
+
+
+def route_evaluator_loop(slug, pipeline, agents, am_root, workdirs, interval=5):
+    """Main route evaluator loop."""
+    agent_states = {}
+    print("Route evaluator running (Ctrl+C to stop)", file=sys.stderr)
+
+    # Catch-up scan on startup
+    route_evaluator_tick(slug, pipeline, agents, am_root, workdirs)
+
+    while True:
+        time.sleep(interval)
+        try:
+            route_evaluator_tick(slug, pipeline, agents, am_root, workdirs)
+            detect_idle_agents(slug, agents, am_root, agent_states)
+        except Exception as e:
+            print(f"Route evaluator error: {e}", file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="AMQ agent dispatch")
+    parser.add_argument("slug", help="Feature slug (e.g., MAC-12345)")
+    parser.add_argument("--config", default=".claude/amq/pipeline.toml",
+                        help="Path to pipeline.toml")
+    parser.add_argument("--plan", default=None, help="Path to plan file")
+    parser.add_argument("--eval-interval", type=int, default=5,
+                        help="Route evaluator poll interval in seconds")
+    args = parser.parse_args()
+
+    # Load pipeline config
+    if not os.path.exists(args.config):
+        sys.exit(f"Config not found: {args.config}\n"
+                 f"Create .claude/amq/pipeline.toml — see ~/.claude/docs/amq-pipeline-schema.md")
+
+    pipeline = load_pipeline(args.config)
+    agents = pipeline.get("agents", [])
+    if not agents:
+        sys.exit("No agents defined in pipeline.toml")
+
+    # Resolve paths
+    toplevel = git_toplevel()
+    am_root = resolve_am_root(args.slug)
+    prefix = pipeline.get("pipeline", {}).get("thread_prefix", "topic")
+    thread = f"{prefix}/{args.slug}"
+
+    # Guard against duplicate slug
+    if os.path.exists(am_root):
+        sys.exit(f"Session '{args.slug}' already exists at {am_root}.\n"
+                 f"Remove it or use a different slug.")
+
+    # Write .amqrc with peers config for cross-project delivery
+    user_inbox = os.path.expanduser(
+        pipeline.get("pipeline", {}).get("user_inbox", "~/.agent-mail")
+    )
+    user_project = pipeline.get("pipeline", {}).get("user_project", "user")
+    amqrc_path = os.path.join(toplevel, ".amqrc")
+    with open(amqrc_path, "w") as f:
+        json.dump({
+            "root": os.path.join(toplevel, ".agent-mail"),
+            "project": args.slug,
+            "peers": {user_project: user_inbox},
+        }, f, indent=2)
+
+    # Initialize user inbox session so --project delivery has a destination
+    user_session_root = os.path.join(user_inbox, args.slug)
+    amq("init", "--root", user_session_root, "--agents", "ashton", "--force")
+
+    print(f"Dispatching: {args.slug}", file=sys.stderr)
+    print(f"  Thread: {thread}", file=sys.stderr)
+    print(f"  AM_ROOT: {am_root}", file=sys.stderr)
+    print(f"  Agents: {', '.join(a['name'] for a in agents)}", file=sys.stderr)
+
+    # Initialize mailboxes
+    init_mailboxes(am_root, agents)
+
+    # Create worktrees
+    global _worktree_setup_cmd
+    _worktree_setup_cmd = pipeline.get("pipeline", {}).get("worktree_setup")
+    workdirs = create_worktrees(args.slug, agents, toplevel)
+    workdirs["__toplevel__"] = toplevel
+
+    # Assign session IDs to agents (for cc-allow session config matching)
+    for agent in agents:
+        agent["_session_id"] = str(uuid.uuid4())
+
+    # Generate permission files
+    for agent in agents:
+        wd = workdirs.get(agent["name"], toplevel)
+        generate_permissions(agent, wd, agents)
+
+    # Send plan if provided
+    if args.plan and os.path.exists(args.plan):
+        print(f"  Sending plan: {args.plan}", file=sys.stderr)
+        send_plan(am_root, thread, args.plan, agents)
+
+    # Spawn first-wave agents (subscribes to "todo", not deferred)
+    print("Spawning agents:", file=sys.stderr)
+    for agent in agents:
+        if "todo" in agent.get("subscribes_to", []) and not agent.get("deferred", False):
+            wd = workdirs.get(agent["name"], toplevel)
+            spawn_agent(args.slug, agent, am_root, thread, wd)
+
+    # Send todo assignments to first-wave agents
+    if args.plan:
+        send_todos(am_root, thread, agents, args.plan)
+
+    # Start amq-notify in background
+    notify_proc = None
+    notify_script = os.path.expanduser("~/.claude/scripts/amq-notify")
+    if os.path.exists(notify_script):
+        notify_proc = subprocess.Popen(
+            [notify_script, "--me", "ashton", "--root", am_root],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        atexit.register(lambda: notify_proc.terminate() if notify_proc.poll() is None else None)
+        print("  amq-notify: started", file=sys.stderr)
+
+    # Print summary
+    print(f"\nDispatched. Thread: {thread}", file=sys.stderr)
+    print(f"Monitor: amq list --me ashton --new --root {am_root}", file=sys.stderr)
+    print(f"Drain:   amq drain --me ashton --include-body --root {am_root}", file=sys.stderr)
+
+    # Run route evaluator (foreground — blocks until Ctrl+C)
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    route_evaluator_loop(args.slug, pipeline, agents, am_root, workdirs, args.eval_interval)
+
+
+if __name__ == "__main__":
+    main()
